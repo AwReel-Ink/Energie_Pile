@@ -1,31 +1,23 @@
 {
     "name": "Énergie Pile",
-    "short_name": "Énergie Pile",
-    "description": "Application de gestion de changement des piles pour suivre la consommation énergétique de vos appareils",
-    "version": "1.0.0",
-    "start_url": "/Energie_Pile/",
+    "short_name": "ÉnergiePile",
+    "description": "Gestion du changement des piles de vos appareils",
+    "start_url": "./index.html",
     "display": "standalone",
-    "background_color": "#667eea",
-    "theme_color": "#667eea",
-    "orientation": "portrait-primary",
-    "scope": "/Energie_Pile/",
+    "background_color": "#0a0a23",
+    "theme_color": "#0a0a23",
+    "orientation": "portrait",
     "lang": "fr-FR",
-    "categories": ["utilities", "productivity"],
     "icons": [
         {
-            "src": "icon192x192.png",
+            "src": "icon-192.png",
             "sizes": "192x192",
-            "type": "image/png",
-            "purpose": "any maskable"
+            "type": "image/png"
         },
         {
-            "src": "icon512x512.png",
+            "src": "icon-512.png",
             "sizes": "512x512",
-            "type": "image/png",
-            "purpose": "any maskable"
+            "type": "image/png"
         }
-    ],
-    "screenshots": [],
-    "related_applications": [],
-    "prefer_related_applications": false
+    ]
 }

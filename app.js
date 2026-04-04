@@ -1,753 +1,761 @@
-// ===== PWA SERVICE WORKER =====
-let deferredPrompt = null;
-let newWorker = null;
+/* ============================================
+   ÉNERGIE PILE - Application Principale
+   © 2026 LEROY Aurélien - Tous droits réservés
+   ============================================ */
 
-// Enregistrement du Service Worker
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', async () => {
-        try {
-            const registration = await navigator.serviceWorker.register('./sw.js');
-            console.log('Service Worker enregistré:', registration.scope);
-            
-            // Vérifier les mises à jour
-            registration.addEventListener('updatefound', () => {
-                newWorker = registration.installing;
-                
-                newWorker.addEventListener('statechange', () => {
-                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                        // Nouvelle version disponible
-                        showUpdateToast();
+(function () {
+    'use strict';
+
+    // ========= IndexedDB =========
+    const DB_NAME = 'EnergiePilev3.0';
+    const DB_STORES = ['devices', 'settings'];
+    let db = null;
+
+    function openDB() {
+        return new Promise((resolve, reject) => {
+            const checkRequest = indexedDB.open(DB_NAME);
+
+            checkRequest.onsuccess = function (e) {
+                const existingDb = e.target.result;
+                let currentVersion = existingDb.version;
+                const existingStores = Array.from(existingDb.objectStoreNames);
+                existingDb.close();
+
+                const needsUpgrade = DB_STORES.some(s => !existingStores.includes(s));
+
+                const req = indexedDB.open(DB_NAME, needsUpgrade ? currentVersion + 1 : currentVersion);
+                req.onupgradeneeded = function (e2) {
+                    const d = e2.target.result;
+                    if (!d.objectStoreNames.contains('devices')) {
+                        const store = d.createObjectStore('devices', { keyPath: 'id' });
+                        store.createIndex('building', 'building', { unique: false });
                     }
-                });
+                    if (!d.objectStoreNames.contains('settings')) {
+                        d.createObjectStore('settings', { keyPath: 'key' });
+                    }
+                };
+                req.onsuccess = function (e2) { db = e2.target.result; resolve(db); };
+                req.onerror = function (e2) { reject(e2.target.error); };
+            };
+
+            checkRequest.onerror = function (e) { reject(e.target.error); };
+        });
+    }
+
+    function dbTransaction(storeName, mode) {
+        return db.transaction(storeName, mode).objectStore(storeName);
+    }
+
+    function dbGetAll(storeName) {
+        return new Promise((resolve, reject) => {
+            const req = dbTransaction(storeName, 'readonly').getAll();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = e => reject(e.target.error);
+        });
+    }
+
+    function dbGet(storeName, key) {
+        return new Promise((resolve, reject) => {
+            const req = dbTransaction(storeName, 'readonly').get(key);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = e => reject(e.target.error);
+        });
+    }
+
+    function dbPut(storeName, data) {
+        return new Promise((resolve, reject) => {
+            const req = dbTransaction(storeName, 'readwrite').put(data);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = e => reject(e.target.error);
+        });
+    }
+
+    function dbDelete(storeName, key) {
+        return new Promise((resolve, reject) => {
+            const req = dbTransaction(storeName, 'readwrite').delete(key);
+            req.onsuccess = () => resolve();
+            req.onerror = e => reject(e.target.error);
+        });
+    }
+
+    // ========= State =========
+    let currentView = 'home'; // 'home' | 'building'
+    let currentBuilding = null;
+    let allDevices = [];
+
+    // ========= DOM refs =========
+    const $ = id => document.getElementById(id);
+    const content = $('content');
+    const pageTitle = $('page-title');
+    const btnBack = $('btn-back');
+    const btnAdd = $('btn-add');
+    const btnSettings = $('btn-settings');
+
+    // Modals
+    const modalOverlay = $('modal-overlay');
+    const modalChangeOverlay = $('modal-change-overlay');
+    const modalSettingsOverlay = $('modal-settings-overlay');
+
+    // ========= Themes =========
+    const THEMES = [
+        { id: 'light', name: 'Clair', icon: '☀️' },
+        { id: 'dark', name: 'Sombre', icon: '🌙' },
+        { id: 'legend', name: 'Légende', icon: '📜' },
+        { id: 'heroic', name: 'Héroïque', icon: '⚔️' },
+        { id: 'epic', name: 'Épique', icon: '🔮' },
+        { id: 'north', name: 'Nord', icon: '🧭' },
+        { id: 'south', name: 'Sud', icon: '🌅' },
+        { id: 'east', name: 'Est', icon: '🏮' },
+        { id: 'west', name: 'Ouest', icon: '🗽' },
+        { id: 'alchemist', name: 'Alchimiste', icon: '⚗️' },
+        { id: 'druid', name: 'Druide', icon: '🌿' },
+        { id: 'dragon', name: 'Dragon', icon: '🐉' },
+        { id: 'fuji', name: 'Fuji', icon: '🗻' },
+        { id: 'cherry', name: 'Cerisier', icon: '🌸' },
+        { id: 'bamboo', name: 'Bambou', icon: '🎋' },
+        { id: 'flower', name: 'Fleur', icon: '🌺' },
+        { id: 'forest', name: 'Forêt', icon: '🌲' },
+        { id: 'wood', name: 'Bois', icon: '🪵' },
+        { id: 'rock', name: 'Roche', icon: '🪨' },
+        { id: 'sand', name: 'Sable', icon: '🏖️' },
+        { id: 'desert', name: 'Désert', icon: '🏜️' },
+        { id: 'steppe', name: 'Steppe', icon: '🌾' },
+        { id: 'tundra', name: 'Tundra', icon: '❄️' },
+        { id: 'ice', name: 'Banquise', icon: '🧊' },
+        { id: 'mountain', name: 'Montagne', icon: '⛰️' },
+        { id: 'water', name: 'Eau', icon: '💧' },
+        { id: 'seaside', name: 'Bord de mer', icon: '🐚' },
+        { id: 'ocean', name: 'Océan', icon: '🌊' },
+        { id: 'abyss', name: 'Abysse', icon: '🦑' },
+        { id: 'tropic', name: 'Tropique', icon: '🌴' },
+        { id: 'moon', name: 'Lune', icon: '🌕' },
+        { id: 'space', name: 'Espace', icon: '🚀' },
+    ];
+
+    // ========= Helpers =========
+    function uid() {
+        return Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+    }
+
+    function formatDate(ts) {
+        if (!ts) return '—';
+        const d = new Date(ts);
+        return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+
+    function daysBetween(a, b) {
+        return Math.round((b - a) / (1000 * 60 * 60 * 24));
+    }
+
+    function getDeviceStatus(device) {
+        // Returns 'ok', 'warn', 'dead'
+        if (!device.changes || device.changes.length === 0) return 'ok';
+        const lastChange = device.changes[device.changes.length - 1];
+        const lastDate = lastChange.date;
+        const now = Date.now();
+        const elapsed = daysBetween(lastDate, now);
+
+        // Estimate next change based on average interval
+        const avgInterval = getAvgInterval(device);
+        if (avgInterval === null) {
+            // Only one change, can't estimate — show ok if < 365 days
+            if (elapsed > 365) return 'dead';
+            if (elapsed > 300) return 'warn';
+            return 'ok';
+        }
+
+        const remaining = avgInterval - elapsed;
+        const warningDays = Math.max(avgInterval * 0.1, Math.min(5, avgInterval * 0.3));
+        if (remaining < 0) return 'dead';
+        if (remaining < warningDays) return 'warn';
+        return 'ok';
+    }
+
+    function getAvgInterval(device) {
+        if (!device.changes || device.changes.length < 2) return null;
+        const dates = device.changes.map(c => c.date).sort((a, b) => a - b);
+        let total = 0;
+        for (let i = 1; i < dates.length; i++) {
+            total += daysBetween(dates[i - 1], dates[i]);
+        }
+        return Math.round(total / (dates.length - 1));
+    }
+
+    function getEstimatedNextChange(device) {
+        if (!device.changes || device.changes.length === 0) return null;
+        const lastDate = device.changes[device.changes.length - 1].date;
+        const avg = getAvgInterval(device);
+        if (avg === null) return null;
+        return lastDate + avg * 24 * 60 * 60 * 1000;
+    }
+
+    function statusIcon(status) {
+        if (status === 'ok') return '🔋';
+        if (status === 'warn') return '⚠️';
+        return '🪫';
+    }
+
+    function buildingIcon(name) {
+        const n = name.toLowerCase();
+        if (n.includes('maison')) return '🏠';
+        if (n.includes('appartement') || n.includes('appart')) return '🏢';
+        if (n.includes('garage')) return '🏗️';
+        if (n.includes('bureau')) return '🏛️';
+        if (n.includes('dépendance') || n.includes('dependance')) return '🏚️';
+        if (n.includes('jardin')) return '🌳';
+        if (n.includes('cave')) return '🪨';
+        if (n.includes('atelier')) return '🔧';
+        return '🏘️';
+    }
+
+    // ========= Render: Home (Buildings) =========
+    function renderHome() {
+        currentView = 'home';
+        currentBuilding = null;
+        pageTitle.textContent = 'Énergie Pile';
+        btnBack.classList.add('hidden');
+
+        const buildings = {};
+        allDevices.forEach(d => {
+            if (!buildings[d.building]) buildings[d.building] = [];
+            buildings[d.building].push(d);
+        });
+
+        const keys = Object.keys(buildings).sort((a, b) => a.localeCompare(b, 'fr'));
+
+        if (keys.length === 0) {
+            content.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">🔋</div>
+                    <p>Aucun appareil enregistré.</p>
+                    <p style="margin-top:.5rem;font-size:.9rem;color:var(--text-secondary)">
+                        Appuyez sur <strong>+</strong> pour ajouter votre premier appareil à pile.
+                    </p>
+                </div>`;
+            return;
+        }
+
+        let html = '<div class="buildings-grid">';
+        keys.forEach(name => {
+            const devices = buildings[name];
+            let ok = 0, warn = 0, dead = 0;
+            devices.forEach(d => {
+                const s = getDeviceStatus(d);
+                if (s === 'ok') ok++;
+                else if (s === 'warn') warn++;
+                else dead++;
             });
-        } catch (error) {
-            console.error('Erreur Service Worker:', error);
+            html += `
+                <div class="building-card" data-building="${encodeURIComponent(name)}">
+                    <div class="building-icon">${buildingIcon(name)}</div>
+                    <div class="building-name">${escapeHtml(name)}</div>
+                    <div class="building-stats">
+                        <span class="stat stat-ok">🔋 ${ok}</span>
+                        <span class="stat stat-warn">⚠️ ${warn}</span>
+                        <span class="stat stat-dead">🪫 ${dead}</span>
+                    </div>
+                </div>`;
+        });
+        html += '</div>';
+        content.innerHTML = html;
+
+        // Events
+        content.querySelectorAll('.building-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const name = decodeURIComponent(card.dataset.building);
+                renderBuilding(name);
+            });
+        });
+    }
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    // ========= Render: Building (Device List) =========
+    function renderBuilding(name) {
+        currentView = 'building';
+        currentBuilding = name;
+        pageTitle.textContent = name;
+        btnBack.classList.remove('hidden');
+
+        const devices = allDevices
+            .filter(d => d.building === name)
+            .sort((a, b) => {
+                const loc = a.location.localeCompare(b.location, 'fr');
+                if (loc !== 0) return loc;
+                return a.name.localeCompare(b.name, 'fr');
+            });
+
+        if (devices.length === 0) {
+            content.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">📦</div>
+                    <p>Aucun appareil dans ce bâtiment.</p>
+                </div>`;
+            return;
         }
-    });
-    
-    // Recharger la page quand le nouveau SW prend le contrôle
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-        window.location.reload();
-    });
-}
 
-// Gestion de l'installation PWA
-window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredPrompt = e;
-    
-    // Afficher le prompt d'installation après un délai
-    setTimeout(() => {
-        showInstallPrompt();
-    }, 30000); // 30 secondes après le chargement
-});
+        // Group by location
+        const groups = {};
+        devices.forEach(d => {
+            if (!groups[d.location]) groups[d.location] = [];
+            groups[d.location].push(d);
+        });
 
-window.addEventListener('appinstalled', () => {
-    console.log('Application installée');
-    deferredPrompt = null;
-    hideInstallPrompt();
-});
+        let html = '';
+        Object.keys(groups).sort((a, b) => a.localeCompare(b, 'fr')).forEach(loc => {
+            html += `<div class="location-group">`;
+            html += `<div class="location-title">📍 ${escapeHtml(loc)}</div>`;
+            groups[loc].forEach(d => {
+                const status = getDeviceStatus(d);
+                const lastChange = d.changes && d.changes.length > 0
+                    ? formatDate(d.changes[d.changes.length - 1].date)
+                    : 'Jamais';
+                const nextEst = getEstimatedNextChange(d);
+                const nextStr = nextEst ? formatDate(nextEst) : 'Non estimé';
+                html += `
+                    <div class="device-item" data-id="${d.id}">
+                        <div class="device-status-icon">${statusIcon(status)}</div>
+                        <div class="device-info">
+                            <div class="device-name">${escapeHtml(d.name)}</div>
+                            <div class="device-meta">
+                                ${d.batteryCount}× ${d.batteryType} · Dernier : ${lastChange} · Prochain : ${nextStr}
+                            </div>
+                        </div>
+                        <div class="device-arrow">›</div>
+                    </div>`;
+            });
+            html += `</div>`;
+        });
 
-// Détection hors ligne
-window.addEventListener('online', () => {
-    hideOfflineIndicator();
-});
+        content.innerHTML = html;
 
-window.addEventListener('offline', () => {
-    showOfflineIndicator();
-});
-
-// ===== PWA UI FUNCTIONS =====
-function showUpdateToast() {
-    const toast = document.getElementById('update-toast');
-    if (toast) {
-        toast.classList.add('show');
+        // Events
+        content.querySelectorAll('.device-item').forEach(item => {
+            item.addEventListener('click', () => {
+                openDeviceActions(item.dataset.id);
+            });
+        });
     }
-}
 
-function updateApp() {
-    if (newWorker) {
-        newWorker.postMessage({ type: 'SKIP_WAITING' });
+    // ========= Device Actions (click on device) =========
+    function openDeviceActions(deviceId) {
+        const device = allDevices.find(d => d.id === deviceId);
+        if (!device) return;
+
+        // Show a small action chooser - we use the change modal directly
+        // with edit/delete buttons incorporated
+        openChangeModal(device);
     }
-    const toast = document.getElementById('update-toast');
-    if (toast) {
-        toast.classList.remove('show');
+
+    // ========= Modal: Add/Edit Device =========
+    function openDeviceModal(device, presetBuilding) {
+        const isEdit = !!device;
+        $('modal-title').textContent = isEdit ? 'Modifier l\'appareil' : 'Ajouter un appareil';
+        $('btn-delete-device').classList.toggle('hidden', !isEdit);
+
+        $('device-id').value = isEdit ? device.id : '';
+        $('device-name').value = isEdit ? device.name : '';
+        $('device-building').value = isEdit ? device.building : (presetBuilding || '');
+        $('device-location').value = isEdit ? device.location : '';
+        $('device-battery-type').value = isEdit ? device.batteryType : '';
+        $('device-battery-count').value = isEdit ? device.batteryCount : 1;
+        $('device-rechargeable').checked = isEdit ? device.rechargeable : false;
+
+        modalOverlay.classList.remove('hidden');
+        $('device-name').focus();
     }
-}
 
-function dismissUpdate() {
-    const toast = document.getElementById('update-toast');
-    if (toast) {
-        toast.classList.remove('show');
+    function closeDeviceModal() {
+        modalOverlay.classList.add('hidden');
+        $('device-form').reset();
+        $('auto-building').classList.remove('show');
+        $('auto-location').classList.remove('show');
     }
-}
 
-function showInstallPrompt() {
-    if (!deferredPrompt) return;
-    
-    // Créer le prompt s'il n'existe pas
-    let prompt = document.getElementById('install-prompt');
-    if (!prompt) {
-        prompt = document.createElement('div');
-        prompt.id = 'install-prompt';
-        prompt.className = 'install-prompt';
-        prompt.innerHTML = `
-            <h3>🔋 Installer Énergie Pile</h3>
-            <p>Installez l'application pour un accès rapide et une utilisation hors ligne !</p>
-            <div class="install-prompt-buttons">
-                <button class="btn-later" onclick="hideInstallPrompt()">Plus tard</button>
-                <button class="btn-install" onclick="installApp()">Installer</button>
-            </div>
-        `;
-        document.body.appendChild(prompt);
-    }
-    
-    setTimeout(() => {
-        prompt.classList.add('show');
-    }, 100);
-}
+    // ========= Modal: Change Batteries =========
+    let changeDevice = null;
+    let selectedCells = new Set();
 
-function hideInstallPrompt() {
-    const prompt = document.getElementById('install-prompt');
-    if (prompt) {
-        prompt.classList.remove('show');
-    }
-}
+    function openChangeModal(device) {
+        changeDevice = device;
+        selectedCells.clear();
+        $('change-device-name').textContent = `${device.name} — ${device.batteryCount}× ${device.batteryType}`;
+        $('change-rechargeable').checked = device.rechargeable || false;
 
-async function installApp() {
-    if (!deferredPrompt) return;
-    
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    
-    console.log('Installation:', outcome);
-    deferredPrompt = null;
-    hideInstallPrompt();
-}
-
-function showOfflineIndicator() {
-    let indicator = document.getElementById('offline-indicator');
-    if (!indicator) {
-        indicator = document.createElement('div');
-        indicator.id = 'offline-indicator';
-        indicator.className = 'offline-indicator';
-        indicator.textContent = '📡 Vous êtes hors ligne';
-        document.body.prepend(indicator);
-    }
-    
-    setTimeout(() => {
-        indicator.classList.add('show');
-    }, 100);
-}
-
-function hideOfflineIndicator() {
-    const indicator = document.getElementById('offline-indicator');
-    if (indicator) {
-        indicator.classList.remove('show');
-    }
-}
-
-// Vérifier l'état de connexion au démarrage
-if (!navigator.onLine) {
-    showOfflineIndicator();
-}
-
-// ===== DATABASE =====
-let db;
-const DB_NAME = 'EnergiePileDB';
-const DB_VERSION = 2;
-
-// Ouvrir/Créer la base de données IndexedDB
-function initDB() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-            db = request.result;
-            resolve(db);
-        };
-        
-        request.onupgradeneeded = (event) => {
-            const database = event.target.result;
-            
-            // Store pour les appareils
-            if (!database.objectStoreNames.contains('devices')) {
-                const deviceStore = database.createObjectStore('devices', { keyPath: 'id', autoIncrement: true });
-                deviceStore.createIndex('name', 'name', { unique: false });
-            }
-            
-            // Store pour les changements de piles
-            if (!database.objectStoreNames.contains('changes')) {
-                const changeStore = database.createObjectStore('changes', { keyPath: 'id', autoIncrement: true });
-                changeStore.createIndex('deviceId', 'deviceId', { unique: false });
-                changeStore.createIndex('date', 'date', { unique: false });
-            }
-            
-            // Store pour les paramètres
-            if (!database.objectStoreNames.contains('settings')) {
-                database.createObjectStore('settings', { keyPath: 'key' });
-            }
-        };
-    });
-}
-
-// ===== CRUD OPERATIONS =====
-
-// Devices
-async function getAllDevices() {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['devices'], 'readonly');
-        const store = transaction.objectStore('devices');
-        const request = store.getAll();
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function getDevice(id) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['devices'], 'readonly');
-        const store = transaction.objectStore('devices');
-        const request = store.get(id);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function addDevice(device) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['devices'], 'readwrite');
-        const store = transaction.objectStore('devices');
-        const request = store.add(device);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function updateDevice(device) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['devices'], 'readwrite');
-        const store = transaction.objectStore('devices');
-        const request = store.put(device);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function deleteDeviceById(id) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['devices', 'changes'], 'readwrite');
-        const deviceStore = transaction.objectStore('devices');
-        const changeStore = transaction.objectStore('changes');
-        
-        // Supprimer l'appareil
-        deviceStore.delete(id);
-        
-        // Supprimer tous les changements associés
-        const index = changeStore.index('deviceId');
-        const request = index.openCursor(IDBKeyRange.only(id));
-        
-        request.onsuccess = (event) => {
-            const cursor = event.target.result;
-            if (cursor) {
-                changeStore.delete(cursor.primaryKey);
-                cursor.continue();
-            }
-        };
-        
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
-    });
-}
-
-// Changes
-async function getChangesForDevice(deviceId) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['changes'], 'readonly');
-        const store = transaction.objectStore('changes');
-        const index = store.index('deviceId');
-        const request = index.getAll(deviceId);
-        
-        request.onsuccess = () => {
-            const changes = request.result.sort((a, b) => new Date(b.date) - new Date(a.date));
-            resolve(changes);
-        };
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function getAllChanges() {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['changes'], 'readonly');
-        const store = transaction.objectStore('changes');
-        const request = store.getAll();
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function addChange(change) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['changes'], 'readwrite');
-        const store = transaction.objectStore('changes');
-        const request = store.add(change);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function updateChange(change) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['changes'], 'readwrite');
-        const store = transaction.objectStore('changes');
-        const request = store.put(change);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function deleteChangeById(id) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['changes'], 'readwrite');
-        const store = transaction.objectStore('changes');
-        const request = store.delete(id);
-        
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// Settings
-async function getSetting(key) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['settings'], 'readonly');
-        const store = transaction.objectStore('settings');
-        const request = store.get(key);
-        
-        request.onsuccess = () => resolve(request.result?.value);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function setSetting(key, value) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['settings'], 'readwrite');
-        const store = transaction.objectStore('settings');
-        const request = store.put({ key, value });
-        
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// ===== STATE =====
-let currentDeviceId = null;
-let editingDeviceId = null;
-let editingChangeId = null;
-let selectedBatteries = [];
-
-// ===== NAVIGATION =====
-function showPage(pageId) {
-    document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
-    document.getElementById(pageId).classList.add('active');
-    
-    if (pageId === 'devices-page') {
-        loadDevicesList();
-    }
-}
-
-// ===== DEVICES LIST =====
-async function loadDevicesList() {
-    const devices = await getAllDevices();
-    const changes = await getAllChanges();
-    
-    // Calculer les statistiques
-    const totalDevices = devices.length;
-    const totalBatteriesInUse = devices.reduce((sum, d) => sum + d.batteryCount, 0);
-    const totalDisposable = changes
-        .filter(c => !c.rechargeable)
-        .reduce((sum, c) => sum + c.count, 0);
-    
-    document.getElementById('total-devices').textContent = totalDevices;
-    document.getElementById('total-batteries-use').textContent = totalBatteriesInUse;
-    document.getElementById('total-disposable').textContent = totalDisposable;
-    
-    // Afficher la liste
-    const listContainer = document.getElementById('devices-list');
-    
-    if (devices.length === 0) {
-        listContainer.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">📱</div>
-                <p>Aucun appareil enregistré</p>
-                <p style="font-size: 0.9rem; margin-top: 10px;">Appuyez sur + pour ajouter votre premier appareil</p>
-            </div>
-        `;
-        return;
-    }
-    
-    listContainer.innerHTML = devices.map(device => `
-        <div class="device-item" onclick="openDeviceDetail(${device.id})">
-            <div class="device-info">
-                <div class="device-name">${escapeHtml(device.name)}</div>
-                <div class="device-details">${device.batteryCount} × ${device.batteryType}</div>
-            </div>
-            <button class="device-settings" onclick="event.stopPropagation(); openEditDeviceModal(${device.id})">⚙️</button>
-        </div>
-    `).join('');
-}
-
-// ===== DEVICE DETAIL =====
-async function openDeviceDetail(deviceId) {
-    currentDeviceId = deviceId;
-    const device = await getDevice(deviceId);
-    const changes = await getChangesForDevice(deviceId);
-    
-    document.getElementById('device-detail-title').textContent = device.name;
-    
-    // Générer les sélecteurs de piles
-    generateBatterySelector(device.batteryCount);
-    
-    // Calculer les statistiques
-    updateDeviceStats(changes, device);
-    
-    // Afficher l'historique
-    renderChangesHistory(changes);
-    
-    showPage('device-detail-page');
-}
-
-function generateBatterySelector(count) {
-    selectedBatteries = [];
-    const container = document.getElementById('battery-selector');
-    
-    container.innerHTML = Array.from({ length: count }, (_, i) => `
-        <div class="battery-head" data-index="${i}" onclick="toggleBattery(${i})">
-            <div class="battery-top"></div>
-            <div class="battery-body">${i + 1}</div>
-        </div>
-    `).join('');
-}
-
-function toggleBattery(index) {
-    const battery = document.querySelector(`.battery-head[data-index="${index}"]`);
-    
-    if (selectedBatteries.includes(index)) {
-        selectedBatteries = selectedBatteries.filter(i => i !== index);
-        battery.classList.remove('selected');
-    } else {
-        selectedBatteries.push(index);
-        battery.classList.add('selected');
-    }
-}
-
-function selectAllBatteries() {
-    const batteries = document.querySelectorAll('.battery-head');
-    selectedBatteries = [];
-    
-    batteries.forEach((battery, index) => {
-        battery.classList.add('selected');
-        selectedBatteries.push(index);
-    });
-}
-
-function updateDeviceStats(changes, device) {
-    if (changes.length === 0) {
-        document.getElementById('last-change').textContent = '--/--/----';
-        document.getElementById('avg-duration').textContent = '-- jours';
-        document.getElementById('next-change').textContent = '--/--/----';
-        document.getElementById('total-consumed').textContent = '0';
-        return;
-    }
-    
-    // Dernier changement
-    const lastChange = changes[0];
-    document.getElementById('last-change').textContent = formatDate(lastChange.date);
-    
-    // Total consommé
-    const totalConsumed = changes.reduce((sum, c) => sum + c.count, 0);
-    document.getElementById('total-consumed').textContent = totalConsumed;
-    
-    // Durée moyenne
-    if (changes.length >= 2) {
-        const durations = [];
-        for (let i = 0; i < changes.length - 1; i++) {
-            const date1 = new Date(changes[i].date);
-            const date2 = new Date(changes[i + 1].date);
-            const diffDays = Math.floor((date1 - date2) / (1000 * 60 * 60 * 24));
-            if (diffDays > 0) durations.push(diffDays);
-        }
-        
-        if (durations.length > 0) {
-            const avgDuration = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
-            document.getElementById('avg-duration').textContent = `${avgDuration} jours`;
-            
-            // Prévision prochain changement
-            const lastDate = new Date(lastChange.date);
-            lastDate.setDate(lastDate.getDate() + avgDuration);
-            document.getElementById('next-change').textContent = formatDate(lastDate.toISOString().split('T')[0]);
-        } else {
-            document.getElementById('avg-duration').textContent = '-- jours';
-            document.getElementById('next-change').textContent = '--/--/----';
-        }
-    } else {
-        document.getElementById('avg-duration').textContent = '-- jours';
-        document.getElementById('next-change').textContent = '--/--/----';
-    }
-}
-
-function renderChangesHistory(changes) {
-    const container = document.getElementById('changes-list');
-    
-    if (changes.length === 0) {
-        container.innerHTML = `
-            <div class="empty-state" style="padding: 30px;">
-                <p>Aucun changement enregistré</p>
-            </div>
-        `;
-        return;
-    }
-    
-    container.innerHTML = changes.map(change => `
-        <div class="change-item">
-            <div class="change-info">
-                <div class="change-date">${formatDate(change.date)}</div>
-                <div class="change-details">
-                    <span>${change.count} pile${change.count > 1 ? 's' : ''}</span>
-                    <span class="badge ${change.rechargeable ? 'badge-rechargeable' : 'badge-disposable'}">
-                        ${change.rechargeable ? '🔄 Rechargeable' : '🗑️ Jetable'}
-                    </span>
+        // Build battery visuals
+        const container = $('battery-visual');
+        container.innerHTML = '';
+        for (let i = 0; i < device.batteryCount; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'battery-cell';
+            cell.dataset.index = i;
+            cell.innerHTML = `
+                <div class="cell-tip"></div>
+                <div class="cell-body">
+                    <div class="cell-fill"></div>
                 </div>
-            </div>
-            <button class="change-settings" onclick="openEditChangeModal(${change.id})">⚙️</button>
-        </div>
-    `).join('');
-}
-
-// ===== ADD BATTERY CHANGE =====
-async function addBatteryChange() {
-    if (selectedBatteries.length === 0) {
-        alert('Veuillez sélectionner au moins une pile');
-        return;
-    }
-    
-    const rechargeable = document.getElementById('rechargeable-toggle').checked;
-    
-    const change = {
-        deviceId: currentDeviceId,
-        date: new Date().toISOString().split('T')[0],
-        count: selectedBatteries.length,
-        rechargeable: rechargeable
-    };
-    
-    await addChange(change);
-    
-    // Rafraîchir
-    const device = await getDevice(currentDeviceId);
-    const changes = await getChangesForDevice(currentDeviceId);
-    
-    generateBatterySelector(device.batteryCount);
-    document.getElementById('rechargeable-toggle').checked = false;
-    updateDeviceStats(changes, device);
-    renderChangesHistory(changes);
-}
-
-// ===== MODALS =====
-
-// Device Modal
-function openAddDeviceModal() {
-    editingDeviceId = null;
-    document.getElementById('modal-title').textContent = 'Ajouter un appareil';
-    document.getElementById('device-name').value = '';
-    document.getElementById('device-batteries').value = 2;
-    document.getElementById('device-battery-type').value = 'AA(LR6)';
-    document.getElementById('delete-device-btn').style.display = 'none';
-    document.getElementById('device-modal').classList.add('active');
-}
-
-async function openEditDeviceModal(deviceId) {
-    editingDeviceId = deviceId;
-    const device = await getDevice(deviceId);
-    
-    document.getElementById('modal-title').textContent = 'Modifier l\'appareil';
-    document.getElementById('device-name').value = device.name;
-    document.getElementById('device-batteries').value = device.batteryCount;
-    document.getElementById('device-battery-type').value = device.batteryType;
-    document.getElementById('delete-device-btn').style.display = 'block';
-    document.getElementById('device-modal').classList.add('active');
-}
-
-function closeDeviceModal() {
-    document.getElementById('device-modal').classList.remove('active');
-    editingDeviceId = null;
-}
-
-async function saveDevice() {
-    const name = document.getElementById('device-name').value.trim();
-    const batteryCount = parseInt(document.getElementById('device-batteries').value);
-    const batteryType = document.getElementById('device-battery-type').value;
-    
-    if (!name) {
-        alert('Veuillez entrer un nom pour l\'appareil');
-        return;
-    }
-    
-    if (batteryCount < 1 || batteryCount > 20) {
-        alert('Le nombre de piles doit être entre 1 et 20');
-        return;
-    }
-    
-    const device = {
-        name,
-        batteryCount,
-        batteryType,
-        createdAt: new Date().toISOString()
-    };
-    
-    if (editingDeviceId) {
-        device.id = editingDeviceId;
-        await updateDevice(device);
-    } else {
-        await addDevice(device);
-    }
-    
-    closeDeviceModal();
-    loadDevicesList();
-}
-
-async function deleteDevice() {
-    if (!editingDeviceId) return;
-    
-    if (confirm('Êtes-vous sûr de vouloir supprimer cet appareil et tout son historique ?')) {
-        await deleteDeviceById(editingDeviceId);
-        closeDeviceModal();
-        loadDevicesList();
-    }
-}
-
-// Change Modal
-async function openEditChangeModal(changeId) {
-    editingChangeId = changeId;
-    
-    const changes = await getChangesForDevice(currentDeviceId);
-    const change = changes.find(c => c.id === changeId);
-    
-    if (!change) return;
-    
-    document.getElementById('change-date').value = change.date;
-    document.getElementById('change-count').value = change.count;
-    document.getElementById('change-rechargeable').checked = change.rechargeable;
-    
-    const device = await getDevice(currentDeviceId);
-    document.getElementById('change-count').max = device.batteryCount;
-    
-    document.getElementById('change-modal').classList.add('active');
-}
-
-function closeChangeModal() {
-    document.getElementById('change-modal').classList.remove('active');
-    editingChangeId = null;
-}
-
-async function saveChange() {
-    const date = document.getElementById('change-date').value;
-    const count = parseInt(document.getElementById('change-count').value);
-    const rechargeable = document.getElementById('change-rechargeable').checked;
-    
-    if (!date) {
-        alert('Veuillez sélectionner une date');
-        return;
-    }
-    
-    const change = {
-        id: editingChangeId,
-        deviceId: currentDeviceId,
-        date,
-        count,
-        rechargeable
-    };
-    
-    await updateChange(change);
-    closeChangeModal();
-    
-    // Rafraîchir
-    const device = await getDevice(currentDeviceId);
-    const changes = await getChangesForDevice(currentDeviceId);
-    updateDeviceStats(changes, device);
-    renderChangesHistory(changes);
-}
-
-async function deleteChange() {
-    if (!editingChangeId) return;
-    
-    if (confirm('Êtes-vous sûr de vouloir supprimer ce changement ?')) {
-        await deleteChangeById(editingChangeId);
-        closeChangeModal();
-        
-        // Rafraîchir
-        const device = await getDevice(currentDeviceId);
-        const changes = await getChangesForDevice(currentDeviceId);
-        updateDeviceStats(changes, device);
-        renderChangesHistory(changes);
-    }
-}
-
-// ===== THEMES =====
-async function setTheme(themeName) {
-    document.documentElement.setAttribute('data-theme', themeName);
-    await setSetting('theme', themeName);
-    
-    // Mettre à jour l'UI des boutons de thème
-    document.querySelectorAll('.theme-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.theme === themeName);
-    });
-}
-
-async function loadTheme() {
-    const theme = await getSetting('theme') || 'light';
-    setTheme(theme);
-}
-
-// ===== UTILITIES =====
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// ===== INITIALIZATION =====
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        await initDB();
-        await loadTheme();
-        console.log('Application initialisée avec succès');
-    } catch (error) {
-        console.error('Erreur d\'initialisation:', error);
-        alert('Erreur lors de l\'initialisation de l\'application');
-    }
-});
-
-// Fermer les modals en cliquant à l'extérieur
-document.querySelectorAll('.modal').forEach(modal => {
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            modal.classList.remove('active');
+                <div class="cell-label">#${i + 1}</div>`;
+            cell.addEventListener('click', () => {
+                if (selectedCells.has(i)) {
+                    selectedCells.delete(i);
+                    cell.classList.remove('selected');
+                } else {
+                    selectedCells.add(i);
+                    cell.classList.add('selected');
+                }
+            });
+            container.appendChild(cell);
         }
+
+        // History
+        renderChangeHistory(device);
+
+        modalChangeOverlay.classList.remove('hidden');
+    }
+
+    function closeChangeModal() {
+        modalChangeOverlay.classList.add('hidden');
+        changeDevice = null;
+        selectedCells.clear();
+    }
+
+    function renderChangeHistory(device) {
+        const container = $('change-history');
+        if (!device.changes || device.changes.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-secondary);font-size:.85rem;text-align:center;margin-top:1rem;">Aucun historique de changement.</p>';
+            return;
+        }
+        let html = '<h4>Historique des changements</h4>';
+        const sorted = [...device.changes].sort((a, b) => b.date - a.date);
+        sorted.forEach(c => {
+            const type = c.rechargeable ? '🔄 Rechargeable' : '🗑️ Jetable';
+            html += `
+                <div class="history-item">
+                    <span class="history-date">${formatDate(c.date)}</span>
+                    <span class="history-detail">${c.count} pile${c.count > 1 ? 's' : ''} · ${type}</span>
+                </div>`;
+        });
+        container.innerHTML = html;
+    }
+
+    // ========= Modal: Settings =========
+    function openSettingsModal() {
+        const grid = $('theme-grid');
+        grid.innerHTML = '';
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+        THEMES.forEach(t => {
+            const btn = document.createElement('button');
+            btn.className = 'theme-btn' + (t.id === currentTheme ? ' active' : '');
+            btn.innerHTML = `<span class="theme-icon">${t.icon}</span><span class="theme-name">${t.name}</span>`;
+            btn.addEventListener('click', () => {
+                applyTheme(t.id);
+                grid.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+            grid.appendChild(btn);
+        });
+        modalSettingsOverlay.classList.remove('hidden');
+    }
+
+    function closeSettingsModal() {
+        modalSettingsOverlay.classList.add('hidden');
+    }
+
+    function applyTheme(themeId) {
+        document.documentElement.setAttribute('data-theme', themeId);
+        dbPut('settings', { key: 'theme', value: themeId });
+    }
+
+    // ========= Autocomplete =========
+    function setupAutocomplete(inputId, listId, getOptions) {
+        const input = $(inputId);
+        const list = $(listId);
+
+        input.addEventListener('input', () => {
+            const val = input.value.trim().toLowerCase();
+            if (val.length === 0) {
+                list.classList.remove('show');
+                return;
+            }
+            const options = getOptions().filter(o => o.toLowerCase().includes(val));
+            if (options.length === 0) {
+                list.classList.remove('show');
+                return;
+            }
+            list.innerHTML = '';
+            options.forEach(o => {
+                const li = document.createElement('li');
+                li.textContent = o;
+                li.addEventListener('mousedown', e => {
+                    e.preventDefault();
+                    input.value = o;
+                    list.classList.remove('show');
+                });
+                list.appendChild(li);
+            });
+            list.classList.add('show');
+        });
+
+        input.addEventListener('blur', () => {
+            setTimeout(() => list.classList.remove('show'), 150);
+        });
+
+        input.addEventListener('focus', () => {
+            if (input.value.trim().length > 0) input.dispatchEvent(new Event('input'));
+        });
+    }
+
+    function getUniqueBuildings() {
+        return [...new Set(allDevices.map(d => d.building))].sort();
+    }
+
+    function getUniqueLocations() {
+        return [...new Set(allDevices.map(d => d.location))].sort();
+    }
+
+    // ========= Data Operations =========
+    async function loadDevices() {
+        allDevices = await dbGetAll('devices');
+    }
+
+    async function saveDevice(deviceData) {
+        await dbPut('devices', deviceData);
+        await loadDevices();
+    }
+
+    async function deleteDevice(id) {
+        await dbDelete('devices', id);
+        await loadDevices();
+    }
+
+    // ========= Event Bindings =========
+    function initEvents() {
+        // Back
+        btnBack.addEventListener('click', () => {
+            renderHome();
+        });
+
+        // Add
+        btnAdd.addEventListener('click', () => {
+            const presetBuilding = currentView === 'building' ? currentBuilding : '';
+            openDeviceModal(null, presetBuilding);
+        });
+
+        // Settings
+        btnSettings.addEventListener('click', openSettingsModal);
+
+        // Close modals
+        $('modal-close').addEventListener('click', closeDeviceModal);
+        $('modal-change-close').addEventListener('click', closeChangeModal);
+        $('modal-settings-close').addEventListener('click', closeSettingsModal);
+
+        // Close on overlay click
+        modalOverlay.addEventListener('click', e => {
+            if (e.target === modalOverlay) closeDeviceModal();
+        });
+        modalChangeOverlay.addEventListener('click', e => {
+            if (e.target === modalChangeOverlay) closeChangeModal();
+        });
+        modalSettingsOverlay.addEventListener('click', e => {
+            if (e.target === modalSettingsOverlay) closeSettingsModal();
+        });
+
+        // Stepper
+        $('count-minus').addEventListener('click', () => {
+            const inp = $('device-battery-count');
+            if (parseInt(inp.value) > 1) inp.value = parseInt(inp.value) - 1;
+        });
+        $('count-plus').addEventListener('click', () => {
+            const inp = $('device-battery-count');
+            if (parseInt(inp.value) < 20) inp.value = parseInt(inp.value) + 1;
+        });
+
+        // Device form submit
+        $('device-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const id = $('device-id').value || uid();
+            const existing = allDevices.find(d => d.id === id);
+
+            const deviceData = {
+                id: id,
+                name: $('device-name').value.trim(),
+                building: $('device-building').value.trim(),
+                location: $('device-location').value.trim(),
+                batteryType: $('device-battery-type').value,
+                batteryCount: parseInt($('device-battery-count').value),
+                rechargeable: $('device-rechargeable').checked,
+                changes: existing ? existing.changes || [] : [],
+                createdAt: existing ? existing.createdAt : Date.now()
+            };
+
+            await saveDevice(deviceData);
+            closeDeviceModal();
+            if (currentView === 'building') {
+                renderBuilding(currentBuilding);
+            } else {
+                renderHome();
+            }
+        });
+
+        // Delete device
+        $('btn-delete-device').addEventListener('click', async () => {
+            const id = $('device-id').value;
+            if (!id) return;
+            if (confirm('Supprimer cet appareil et tout son historique ?')) {
+                await deleteDevice(id);
+                closeDeviceModal();
+                if (currentView === 'building') {
+                    // Check if building still has devices
+                    const remaining = allDevices.filter(d => d.building === currentBuilding);
+                    if (remaining.length === 0) {
+                        renderHome();
+                    } else {
+                        renderBuilding(currentBuilding);
+                    }
+                } else {
+                    renderHome();
+                }
+            }
+        });
+
+        // Select all batteries
+        $('btn-select-all').addEventListener('click', () => {
+            if (!changeDevice) return;
+            const cells = $('battery-visual').querySelectorAll('.battery-cell');
+            const allSelected = selectedCells.size === changeDevice.batteryCount;
+            cells.forEach((cell, i) => {
+                if (allSelected) {
+                    selectedCells.delete(i);
+                    cell.classList.remove('selected');
+                } else {
+                    selectedCells.add(i);
+                    cell.classList.add('selected');
+                }
+            });
+        });
+
+        // Confirm battery change
+        $('btn-confirm-change').addEventListener('click', async () => {
+            if (!changeDevice) return;
+            if (selectedCells.size === 0) {
+                alert('Veuillez sélectionner au moins une pile changée.');
+                return;
+            }
+
+            const change = {
+                date: Date.now(),
+                count: selectedCells.size,
+                rechargeable: $('change-rechargeable').checked,
+                cells: [...selectedCells]
+            };
+
+            if (!changeDevice.changes) changeDevice.changes = [];
+            changeDevice.changes.push(change);
+            await saveDevice(changeDevice);
+
+            renderChangeHistory(changeDevice);
+
+            // Reset selection
+            selectedCells.clear();
+            $('battery-visual').querySelectorAll('.battery-cell').forEach(c => c.classList.remove('selected'));
+
+            // Refresh view behind
+            if (currentView === 'building') {
+                renderBuilding(currentBuilding);
+            } else {
+                renderHome();
+            }
+        });
+
+        // Edit device from change modal - add edit button dynamically
+        // We add two buttons in the change modal header area
+        $('btn-edit-device').addEventListener('click', () => {
+            const device = changeDevice;
+            closeChangeModal();
+            openDeviceModal(device);
+        });
+
+        // Autocomplete
+        setupAutocomplete('device-building', 'auto-building', getUniqueBuildings);
+        setupAutocomplete('device-location', 'auto-location', getUniqueLocations);
+
+        // Keyboard escape
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                if (!modalOverlay.classList.contains('hidden')) closeDeviceModal();
+                else if (!modalChangeOverlay.classList.contains('hidden')) closeChangeModal();
+                else if (!modalSettingsOverlay.classList.contains('hidden')) closeSettingsModal();
+            }
+        });
+    }
+
+    function addChangeModalActions() {
+        const header = $('modal-change').querySelector('.modal-header');
+        const actionsDiv = document.createElement('div');
+        actionsDiv.style.cssText = 'display:flex;gap:.35rem;margin-left:auto;margin-right:.5rem;';
+
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'header-btn';
+        btnEdit.innerHTML = '✏️';
+        btnEdit.title = 'Modifier l\'appareil';
+        btnEdit.style.cssText = 'width:34px;height:34px;font-size:1rem;background:var(--accent-light);color:var(--accent);';
+        btnEdit.addEventListener('click', () => {
+            if (!changeDevice) return;
+            closeChangeModal();
+            openDeviceModal(changeDevice);
+        });
+
+        const btnDel = document.createElement('button');
+        btnDel.className = 'header-btn';
+        btnDel.innerHTML = '🗑️';
+        btnDel.title = 'Supprimer l\'appareil';
+        btnDel.style.cssText = 'width:34px;height:34px;font-size:1rem;background:var(--danger);color:#fff;';
+        btnDel.addEventListener('click', async () => {
+            if (!changeDevice) return;
+            if (confirm('Supprimer cet appareil et tout son historique ?')) {
+                const bld = changeDevice.building;
+                await deleteDevice(changeDevice.id);
+                closeChangeModal();
+                const remaining = allDevices.filter(d => d.building === bld);
+                if (remaining.length === 0 || currentView !== 'building') {
+                    renderHome();
+                } else {
+                    renderBuilding(currentBuilding);
+                }
+            }
+        });
+
+        actionsDiv.appendChild(btnEdit);
+        actionsDiv.appendChild(btnDel);
+
+        // Insert before close button
+        const closeBtn = header.querySelector('.modal-close');
+        header.insertBefore(actionsDiv, closeBtn);
+    }
+
+    // ========= Init =========
+    async function init() {
+        await openDB();
+
+        // Load theme
+        const themeSetting = await dbGet('settings', 'theme');
+        if (themeSetting && themeSetting.value) {
+            document.documentElement.setAttribute('data-theme', themeSetting.value);
+        }
+
+        await loadDevices();
+        initEvents();
+        renderHome();
+    }
+
+    // Start
+    init().catch(err => {
+        console.error('Erreur initialisation Énergie Pile :', err);
+        content.innerHTML = `<div class="empty-state"><div class="empty-icon">❌</div><p>Erreur de chargement. Vérifiez que votre navigateur supporte IndexedDB.</p></div>`;
     });
-});
+
+})();

@@ -1,127 +1,47 @@
-const CACHE_NAME = 'energie-pile-v1';
-const ASSETS_TO_CACHE = [
+const CACHE_NAME = 'energie-pile3.0-v1.0.0';
+const ASSETS = [
     './',
     './index.html',
     './style.css',
     './app.js',
     './manifest.json',
-    './icon192x192.png',
-    './icon512x512.png'
+    './icon-192.png',
+    './icon-512.png'
 ];
 
-// Installation du Service Worker
-self.addEventListener('install', (event) => {
-    console.log('Service Worker: Installation...');
-    
-    event.waitUntil(
-        caches.open(CACHE_NAME)
-            .then((cache) => {
-                console.log('Service Worker: Mise en cache des fichiers');
-                return cache.addAll(ASSETS_TO_CACHE);
-            })
-            .then(() => {
-                console.log('Service Worker: Tous les fichiers sont en cache');
-                return self.skipWaiting();
-            })
-            .catch((error) => {
-                console.error('Service Worker: Erreur de mise en cache', error);
-            })
+// Installation
+self.addEventListener('install', e => {
+    e.waitUntil(
+        caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
     );
+    self.skipWaiting();
 });
 
-// Activation du Service Worker
-self.addEventListener('activate', (event) => {
-    console.log('Service Worker: Activation...');
-    
-    event.waitUntil(
-        caches.keys()
-            .then((cacheNames) => {
-                return Promise.all(
-                    cacheNames.map((cache) => {
-                        if (cache !== CACHE_NAME) {
-                            console.log('Service Worker: Suppression ancien cache', cache);
-                            return caches.delete(cache);
-                        }
-                    })
-                );
-            })
-            .then(() => {
-                console.log('Service Worker: Activé avec succès');
-                return self.clients.claim();
-            })
+// Activation - nettoyage anciens caches
+self.addEventListener('activate', e => {
+    e.waitUntil(
+        caches.keys().then(keys =>
+            Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+        )
     );
+    self.clients.claim();
 });
 
-// Interception des requêtes (stratégie Cache First)
-self.addEventListener('fetch', (event) => {
-    // Ignorer les requêtes non-GET
-    if (event.request.method !== 'GET') {
-        return;
-    }
-
-    // Ignorer les requêtes chrome-extension et autres
-    if (!event.request.url.startsWith('http')) {
-        return;
-    }
-
-    event.respondWith(
-        caches.match(event.request)
-            .then((cachedResponse) => {
-                // Retourner le cache si disponible
-                if (cachedResponse) {
-                    // En arrière-plan, mettre à jour le cache
-                    fetchAndUpdate(event.request);
-                    return cachedResponse;
+// Fetch - cache first, fallback network
+self.addEventListener('fetch', e => {
+    e.respondWith(
+        caches.match(e.request).then(cached => {
+            return cached || fetch(e.request).then(response => {
+                if (response.ok && e.request.method === 'GET') {
+                    const clone = response.clone();
+                    caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
                 }
-                
-                // Sinon, faire la requête réseau
-                return fetch(event.request)
-                    .then((networkResponse) => {
-                        // Mettre en cache la nouvelle réponse
-                        if (networkResponse && networkResponse.status === 200) {
-                            const responseClone = networkResponse.clone();
-                            caches.open(CACHE_NAME)
-                                .then((cache) => {
-                                    cache.put(event.request, responseClone);
-                                });
-                        }
-                        return networkResponse;
-                    })
-                    .catch(() => {
-                        // Si hors ligne et pas en cache, retourner une page d'erreur
-                        if (event.request.destination === 'document') {
-                            return caches.match('/index.html');
-                        }
-                    });
-            })
-    );
-});
-
-// Fonction pour mettre à jour le cache en arrière-plan
-function fetchAndUpdate(request) {
-    fetch(request)
-        .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-                caches.open(CACHE_NAME)
-                    .then((cache) => {
-                        cache.put(request, networkResponse);
-                    });
+                return response;
+            });
+        }).catch(() => {
+            if (e.request.destination === 'document') {
+                return caches.match('./index.html');
             }
         })
-        .catch(() => {
-            // Silencieux si hors ligne
-        });
-}
-
-// Écouter les messages du client
-self.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'SKIP_WAITING') {
-        self.skipWaiting();
-    }
-    
-    if (event.data && event.data.type === 'CLEAR_CACHE') {
-        caches.delete(CACHE_NAME).then(() => {
-            console.log('Service Worker: Cache vidé');
-        });
-    }
+    );
 });
