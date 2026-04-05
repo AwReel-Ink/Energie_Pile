@@ -1,6 +1,7 @@
 /* ============================================
    ÉNERGIE PILE - Styles Principaux
    © 2026 LEROY Aurélien - Tous droits réservés
+   Version-1.0.2.
    ============================================ */
 
 :root {
@@ -1170,4 +1171,33 @@ hr {
 @media (max-height: 500px) {
     .modal { max-height: 98vh; }
     #main-header { padding: .4rem .75rem; }
+}
+
+.settings-section {
+    margin-top: 24px;
+    padding: 16px;
+    border-radius: 12px;
+    background: var(--card-bg, rgba(255,255,255,0.05));
+}
+
+.settings-section h3 {
+    margin: 0 0 8px 0;
+    font-size: 1.1em;
+}
+
+.btn-action {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    font-size: 1em;
+    cursor: pointer;
+    background: var(--accent, #4a6cf7);
+    color: #fff;
+    font-weight: 600;
+    transition: opacity .2s;
+}
+
+.btn-action:active {
+    opacity: .7;
 }
