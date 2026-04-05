@@ -1,6 +1,7 @@
 /* ============================================
    ÉNERGIE PILE - Application Principale
    © 2026 LEROY Aurélien - Tous droits réservés
+   Version 1.0.2.
    ============================================ */
 
 (function () {
@@ -751,6 +752,79 @@
         initEvents();
         renderHome();
     }
+
+    // ========= Import / Export =========
+
+    function exportData() {
+        const tx = db.transaction(['devices'], 'readonly');
+        const store = tx.objectStore('devices');
+        const req = store.getAll();
+        req.onsuccess = () => {
+            const data = {
+                app: 'energie-pile',
+                version: 1,
+                date: new Date().toISOString(),
+                devices: req.result
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `energie-pile-backup-${new Date().toISOString().slice(0,10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('📤 Export réussi !');
+        };
+    }
+
+    function importData(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (data.app !== 'energie-pile' || !Array.isArray(data.devices)) {
+                    showToast('❌ Fichier invalide');
+                    return;
+                }
+
+                if (!confirm(`⚠️ Importer ${data.devices.length} appareil(s) ?\nCela remplacera TOUTES vos données actuelles.`)) return;
+
+                // Vider le store puis insérer
+                const tx = db.transaction(['devices'], 'readwrite');
+                const store = tx.objectStore('devices');
+                store.clear().onsuccess = () => {
+                    data.devices.forEach(device => {
+                        store.put(device);
+                    });
+                };
+                tx.oncomplete = () => {
+                    showToast('📥 Import réussi !');
+                    loadDevices();
+                    renderCurrentView();
+                };
+                tx.onerror = () => {
+                    showToast('❌ Erreur lors de l\'import');
+                };
+            } catch (err) {
+                showToast('❌ Fichier corrompu ou invalide');
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    // Event listeners (à placer dans ton init ou après le DOM ready)
+    document.getElementById('btnExport').addEventListener('click', exportData);
+    document.getElementById('btnImport').addEventListener('click', () => {
+        document.getElementById('fileImport').click();
+    });
+    document.getElementById('fileImport').addEventListener('change', (e) => {
+        if (e.target.files[0]) {
+            importData(e.target.files[0]);
+            e.target.value = '';
+        }
+    });
 
     // Start
     init().catch(err => {
