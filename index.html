@@ -1,161 +1,253 @@
-    <!-- Version-1.0.2 -->
 <!DOCTYPE html>
+<!-- Version-1.1.0 -->
 <html lang="fr" data-theme="light">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Énergie Pile</title>
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#0a0a23">
+    <meta name="theme-color" content="#4361ee">
+    <link rel="icon" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="app">
         <header id="main-header">
-            <button id="btn-back" class="header-btn hidden" aria-label="Retour">←</button>
-            <h1 id="page-title">Énergie Pile</h1>
-            <div class="header-actions">
-                <button id="btn-add" class="header-btn" aria-label="Ajouter">+</button>
-                <button id="btn-settings" class="header-btn" aria-label="Paramètres">⚙️</button>
+            <button id="btn-back" class="header-btn hidden" aria-label="Retour">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+            </button>
+            <div class="header-titles">
+                <h1 id="page-title">Énergie Pile</h1>
+                <p id="page-subtitle"></p>
             </div>
+            <button id="btn-rename-building" class="header-btn hidden" aria-label="Renommer ce bâtiment" title="Renommer ce bâtiment">✏️</button>
+            <button id="btn-settings" class="header-btn" aria-label="Paramètres" title="Paramètres">⚙️</button>
         </header>
+
         <main id="content"></main>
+
+        <button id="btn-add" class="fab" aria-label="Ajouter un appareil">
+            <span class="fab-plus" aria-hidden="true">+</span>
+            <span class="fab-label">Ajouter</span>
+        </button>
     </div>
 
-    <!-- Modal Ajout/Modification -->
-    <div id="modal-overlay" class="modal-overlay hidden">
-        <div class="modal" id="modal-device">
-            <div class="modal-header">
-                <h2 id="modal-title">Ajouter un appareil</h2>
-                <button class="modal-close" id="modal-close">✕</button>
+    <!-- ===== Fiche appareil (consultation + changement de piles) ===== -->
+    <div id="sheet-device" class="overlay hidden">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="device-sheet-title">
+            <div class="sheet-handle" aria-hidden="true"></div>
+            <div class="sheet-header">
+                <div class="sheet-titles">
+                    <h2 id="device-sheet-title"></h2>
+                    <p id="device-sheet-where" class="sheet-sub"></p>
+                </div>
+                <button class="icon-btn" data-close aria-label="Fermer">✕</button>
             </div>
-            <div class="modal-body">
-                <form id="device-form">
+            <div class="sheet-body">
+                <div id="device-status" class="status-card"></div>
+
+                <section class="change-box">
+                    <h3>Changer les piles</h3>
+                    <p class="hint" id="cells-hint">Touchez une pile pour la décocher si vous ne les avez pas toutes changées.</p>
+                    <div id="battery-visual" class="battery-visual"></div>
+
+                    <div class="field">
+                        <span class="field-label">Quand ?</span>
+                        <div class="segmented" id="change-when">
+                            <button type="button" data-value="today" class="active">Aujourd'hui</button>
+                            <button type="button" data-value="other">Autre date</button>
+                        </div>
+                        <input type="date" id="change-date" class="input hidden" aria-label="Date du changement">
+                    </div>
+
+                    <div class="field">
+                        <span class="field-label">Piles mises</span>
+                        <div class="segmented" id="change-kind">
+                            <button type="button" data-value="disposable">🗑️ Jetables</button>
+                            <button type="button" data-value="rechargeable">🔄 Rechargeables</button>
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn btn-primary btn-block btn-big" id="btn-confirm-change">
+                        ✅ J'ai changé les piles
+                    </button>
+                </section>
+
+                <section>
+                    <h3>Historique</h3>
+                    <div id="change-history" class="history"></div>
+                </section>
+
+                <div class="sheet-footer">
+                    <button type="button" class="btn btn-ghost" id="btn-edit-device">✏️ Modifier</button>
+                    <button type="button" class="btn btn-ghost btn-ghost-danger" id="btn-delete-from-sheet">🗑️ Supprimer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Formulaire ajout / modification ===== -->
+    <div id="sheet-form" class="overlay hidden">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="form-title">
+            <div class="sheet-handle" aria-hidden="true"></div>
+            <div class="sheet-header">
+                <div class="sheet-titles"><h2 id="form-title">Nouvel appareil</h2></div>
+                <button class="icon-btn" data-close aria-label="Fermer">✕</button>
+            </div>
+            <div class="sheet-body">
+                <form id="device-form" novalidate>
                     <input type="hidden" id="device-id">
-                    <div class="form-group">
-                        <label for="device-name">Nom de l'appareil</label>
-                        <input type="text" id="device-name" required placeholder="Ex: Horloge murale">
+
+                    <div class="field">
+                        <label class="field-label" for="device-name">Quel appareil ?</label>
+                        <input type="text" id="device-name" class="input" placeholder="Ex : Télécommande TV" autocomplete="off" enterkeyhint="next">
+                        <p class="field-error hidden" id="err-name">Donnez un nom à l'appareil.</p>
                     </div>
-                    <div class="form-group">
-                        <label for="device-building">Bâtiment</label>
-                        <input type="text" id="device-building" required placeholder="Ex: Maison" autocomplete="off">
-                        <ul class="autocomplete-list" id="auto-building"></ul>
+
+                    <div class="field">
+                        <label class="field-label" for="device-building">Dans quel bâtiment ?</label>
+                        <input type="text" id="device-building" class="input" placeholder="Ex : Maison" autocomplete="off" enterkeyhint="next">
+                        <div class="chips" id="chips-building"></div>
+                        <p class="field-error hidden" id="err-building">Indiquez le bâtiment.</p>
                     </div>
-                    <div class="form-group">
-                        <label for="device-location">Emplacement</label>
-                        <input type="text" id="device-location" required placeholder="Ex: Salon" autocomplete="off">
-                        <ul class="autocomplete-list" id="auto-location"></ul>
+
+                    <div class="field">
+                        <label class="field-label" for="device-location">Dans quelle pièce ?</label>
+                        <input type="text" id="device-location" class="input" placeholder="Ex : Salon" autocomplete="off" enterkeyhint="done">
+                        <div class="chips" id="chips-location"></div>
+                        <p class="field-error hidden" id="err-location">Indiquez la pièce ou l'emplacement.</p>
                     </div>
-                    <div class="form-group">
-                        <label for="device-battery-type">Type de pile</label>
-                        <select id="device-battery-type" required>
-                            <option value="">-- Choisir --</option>
-                            <option value="AA(LR6)">AA (LR6)</option>
-                            <option value="AAA(LR03)">AAA (LR03)</option>
-                            <option value="AAAA(LR61)">AAAA (LR61)</option>
-                            <option value="C(LR14)">C (LR14)</option>
-                            <option value="D(LR20)">D (LR20)</option>
-                            <option value="6LR61(9V)">9V (6LR61)</option>
-                            <option value="CR2016">CR2016</option>
-                            <option value="CR2025">CR2025</option>
-                            <option value="CR2032">CR2032</option>
-                            <option value="CR2450">CR2450</option>
-                            <option value="CR123A">CR123A</option>
-                            <option value="LR44(AG13)">LR44 (AG13)</option>
-                            <option value="SR626SW">SR626SW</option>
-                            <option value="LR1(N)">LR1 (N)</option>
-                            <option value="3R12(4.5V)">3R12 (4.5V)</option>
-                            <option value="A23(12V)">A23 (12V)</option>
-                            <option value="A27(12V)">A27 (12V)</option>
+
+                    <div class="field">
+                        <span class="field-label">Quel type de pile ?</span>
+                        <div class="chips chips-types" id="chips-type"></div>
+                        <select id="device-battery-type" class="input" aria-label="Type de pile">
+                            <option value="">Autre type…</option>
+                            <optgroup label="Piles bâton">
+                                <option value="AA(LR6)">AA (LR6)</option>
+                                <option value="AAA(LR03)">AAA (LR03)</option>
+                                <option value="AAAA(LR61)">AAAA (LR61)</option>
+                                <option value="C(LR14)">C (LR14)</option>
+                                <option value="D(LR20)">D (LR20)</option>
+                                <option value="LR1(N)">LR1 (N)</option>
+                            </optgroup>
+                            <optgroup label="Piles bouton">
+                                <option value="CR2016">CR2016</option>
+                                <option value="CR2025">CR2025</option>
+                                <option value="CR2032">CR2032</option>
+                                <option value="CR2450">CR2450</option>
+                                <option value="LR44(AG13)">LR44 (AG13)</option>
+                                <option value="SR626SW">SR626SW</option>
+                            </optgroup>
+                            <optgroup label="Autres">
+                                <option value="6LR61(9V)">9V (6LR61)</option>
+                                <option value="CR123A">CR123A</option>
+                                <option value="3R12(4.5V)">3R12 (4.5V)</option>
+                                <option value="A23(12V)">A23 (12V)</option>
+                                <option value="A27(12V)">A27 (12V)</option>
+                            </optgroup>
+                            <option value="__autre">Autre (je l'écris)</option>
                         </select>
+                        <input type="text" id="device-battery-custom" class="input hidden" placeholder="Ex : LR41" autocomplete="off" aria-label="Type de pile personnalisé">
+                        <p class="field-error hidden" id="err-type">Choisissez le type de pile.</p>
                     </div>
-                    <div class="form-group">
-                        <label for="device-battery-count">Nombre de piles</label>
-                        <div class="stepper">
-                            <button type="button" class="stepper-btn" id="count-minus">−</button>
-                            <input type="number" id="device-battery-count" min="1" max="20" value="1" required>
-                            <button type="button" class="stepper-btn" id="count-plus">+</button>
+
+                    <div class="field-row">
+                        <div class="field">
+                            <span class="field-label">Combien ?</span>
+                            <div class="stepper">
+                                <button type="button" class="stepper-btn" id="count-minus" aria-label="Une pile de moins">−</button>
+                                <input type="number" id="device-battery-count" min="1" max="20" value="1" inputmode="numeric" aria-label="Nombre de piles">
+                                <button type="button" class="stepper-btn" id="count-plus" aria-label="Une pile de plus">+</button>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <span class="field-label">Piles utilisées</span>
+                            <div class="segmented segmented-vertical" id="device-kind">
+                                <button type="button" data-value="disposable" class="active">🗑️ Jetables</button>
+                                <button type="button" data-value="rechargeable">🔄 Rechargeables</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Type d'alimentation</label>
-                        <div class="slider-toggle">
-                            <span class="slider-label" id="label-disposable">Jetable</span>
-                            <label class="switch">
-                                <input type="checkbox" id="device-rechargeable">
-                                <span class="slider-track"></span>
-                            </label>
-                            <span class="slider-label" id="label-rechargeable">Rechargeable</span>
+
+                    <div class="field" id="field-first-change">
+                        <span class="field-label">Dernier changement de piles</span>
+                        <div class="segmented" id="first-change">
+                            <button type="button" data-value="unknown" class="active">Je ne sais pas</button>
+                            <button type="button" data-value="today">Aujourd'hui</button>
+                            <button type="button" data-value="other">Autre date</button>
                         </div>
+                        <input type="date" id="first-change-date" class="input hidden" aria-label="Date du dernier changement">
+                        <p class="hint">Sert de point de départ pour prévoir le prochain changement.</p>
                     </div>
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-danger hidden" id="btn-delete-device">Supprimer</button>
-                        <button type="submit" class="btn btn-primary">Enregistrer</button>
-                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-block btn-big">Enregistrer</button>
+                    <button type="button" class="btn btn-ghost btn-ghost-danger btn-block hidden" id="btn-delete-device">🗑️ Supprimer cet appareil</button>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- Modal Changement de pile -->
-    <div id="modal-change-overlay" class="modal-overlay hidden">
-        <div class="modal" id="modal-change">
-            <div class="modal-header">
-                <h2>Changement de piles</h2>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <button id="btn-edit-device" class="btn-icon" title="Modifier l'appareil">✏️</button>
-                    <button class="modal-close" id="modal-change-close">✕</button>
-                </div>
+    <!-- ===== Paramètres ===== -->
+    <div id="sheet-settings" class="overlay hidden">
+        <div class="sheet sheet-large" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div class="sheet-handle" aria-hidden="true"></div>
+            <div class="sheet-header">
+                <div class="sheet-titles"><h2 id="settings-title">Paramètres</h2></div>
+                <button class="icon-btn" data-close aria-label="Fermer">✕</button>
             </div>
-            <div class="modal-body">
-                <p id="change-device-name" class="change-title"></p>
-                <div id="battery-visual" class="battery-visual"></div>
-                <button type="button" class="btn btn-secondary" id="btn-select-all">Toutes changées</button>
-                <div class="form-group" style="margin-top:1rem">
-                    <div class="slider-toggle">
-                        <span class="slider-label">Jetable</span>
-                        <label class="switch">
-                            <input type="checkbox" id="change-rechargeable">
-                            <span class="slider-track"></span>
-                        </label>
-                        <span class="slider-label">Rechargeable</span>
+            <div class="sheet-body">
+                <section class="settings-section">
+                    <h3>🎨 Thème</h3>
+                    <div id="theme-grid" class="theme-grid"></div>
+                </section>
+
+                <section class="settings-section">
+                    <h3>💾 Sauvegarde</h3>
+                    <p class="hint">Exportez vos données pour les transférer ou faire un backup.</p>
+                    <div class="settings-actions">
+                        <button id="btnExport" class="btn-action">📤 Exporter</button>
+                        <button id="btnImport" class="btn-action">📥 Importer</button>
+                        <button id="btnServeurMaison" class="btn-action">🏠 Serveur maison</button>
                     </div>
+                    <input type="file" id="fileImport" accept=".json,application/json" hidden>
+                </section>
+
+                <section class="settings-section">
+                    <h3>💡 Comment ça marche</h3>
+                    <ul class="help-list">
+                        <li><span class="status-dot s-ok">🔋</span> <strong>OK</strong> : rien à faire.</li>
+                        <li><span class="status-dot s-warn">⚠️</span> <strong>Bientôt</strong> : le changement approche.</li>
+                        <li><span class="status-dot s-dead">🪫</span> <strong>À changer</strong> : la date prévue est dépassée.</li>
+                        <li><span class="status-dot s-new">❔</span> <strong>Date inconnue</strong> : aucun changement noté.</li>
+                    </ul>
+                    <p class="hint">La date du prochain changement est calculée à partir de la durée moyenne entre vos changements. Avec un seul changement noté, l'appli compte environ un an.</p>
+                </section>
+
+                <div class="copyright">
+                    <p>© 2026 <strong>LEROY Aurélien</strong></p>
+                    <p>Tous droits réservés.</p>
+                    <p class="app-version">Énergie Pile v1.1.0</p>
                 </div>
-                <div class="form-actions">
-                    <button type="button" class="btn btn-primary" id="btn-confirm-change">Confirmer le changement</button>
-                </div>
-                <div id="change-history" class="change-history"></div>
             </div>
         </div>
     </div>
 
-    <!-- Modal Paramètres -->
-    <div id="modal-settings-overlay" class="modal-overlay hidden">
-        <div class="modal modal-large" id="modal-settings">
-            <div class="modal-header">
-                <h2>Paramètres & Informations</h2>
-                <button class="modal-close" id="modal-settings-close">✕</button>
-            </div>
-            <div class="modal-body">
-                <h3>Thèmes</h3>
-                <div id="theme-grid" class="theme-grid"></div>
-                <hr>
-                <div class="settings-section">
-                    <h3>💾 Sauvegarde</h3>
-                    <p style="font-size:.85em;opacity:.7;margin-bottom:12px;">Exportez vos données pour les transférer ou faire un backup.</p>
-                    <button id="btnExport" class="btn-action">📤 Exporter</button>
-                    <button id="btnImport" class="btn-action" style="margin-top:8px;">📥 Importer</button>
-                    <input type="file" id="fileImport" accept=".json" style="display:none;">
-                </div>
-                <hr>
-                <div class="copyright">
-                    <p>© 2026 <strong>LEROY Aurélien</strong></p>
-                    <p>Tous droits réservés.</p>
-                    <p class="app-version">Énergie Pile v1.0.2</p>
-                </div>
+    <!-- ===== Boîte de confirmation / saisie ===== -->
+    <div id="dialog" class="overlay overlay-center hidden">
+        <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title">
+            <h2 id="dialog-title"></h2>
+            <p id="dialog-message"></p>
+            <input type="text" id="dialog-input" class="input hidden" autocomplete="off">
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-ghost" id="dialog-cancel">Annuler</button>
+                <button type="button" class="btn btn-primary" id="dialog-ok">OK</button>
             </div>
         </div>
     </div>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
 
     <script>
         if ('serviceWorker' in navigator) {
@@ -163,6 +255,7 @@
         }
     </script>
 
+    <script src="sync-maison.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
